@@ -1,0 +1,196 @@
+trigger: none
+pr: none
+schedules:
+- cron: '0 2 * * *'
+  displayName: Regular build
+  branches:
+    include:
+    - main
+
+
+parameters:
+- name: buildPhpVersion
+  displayName: Build PHP version
+  type: string
+  default: 8.2
+- name: buildImageType
+  displayName: Build image type
+  type: string
+  default: apache
+- name: platforms
+  displayName: Build platforms
+  type: string
+  default: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v8,linux/386
+- name: repository
+  displayName: Repository name
+  type: string
+  default: fireflyiii/core
+- name: baseImage
+  displayName: Base image name
+  type: string
+  default: fireflyiii/base
+- name: buildVersion
+  displayName: Which version to build
+  type: string
+  default: develop
+
+jobs:
+- job: 'BuildFFIII'
+  timeoutInMinutes: 10
+  workspace:
+    clean: all
+  pool:
+    vmImage: "ubuntu-latest"
+    name: Azure Pipelines
+  steps:
+  - checkout: self
+    persistCredentials: true
+    clean: true
+  - script: |
+      docker buildx prune --force
+      docker container stop $(docker container ls -a -f name=builder --format="{{.ID}}") || true
+      docker container rm $(docker container ls -a -f name=builder --format="{{.ID}}") || true
+    displayName: 'Prune and remove old builder.'
+  - script: |
+      docker run --rm --privileged multiarch/qemu-user-static --reset -p yes i
+      docker buildx create --name firefly_iii_builder
+      docker buildx inspect firefly_iii_builder --bootstrap
+      docker buildx use firefly_iii_builder
+    displayName: 'Set up builder'
+  - script: |
+      cd MainImage
+      git switch -c main
+      git branch --set-upstream-to=origin/main main
+      echo "Update counters"
+      BUILDNR=$(<"counter.txt")
+      BUILDNR=$((BUILDNR + 1))
+      echo $BUILDNR > counter.txt
+      echo $(date '+%d-%m-%Y %T %Z') > date.txt
+      echo "GOING TO BUILD BUILDNR #${BUILDNR}"
+      git pull
+      git config user.email "robot@firefly-iii.org"
+      git config user.name "Firefly III build robot"
+      git add counter.txt
+      git add date.txt
+      git commit -m "Auto-update build files for build #${BUILDNR}."
+      git push
+    displayName: 'Commit changes to Git.'
+  - script: |
+      set -euo pipefail
+
+      # docker login with token.
+      echo 'Docker login...'
+      echo "${DOCKER_PASSWORD}" | docker login --username ${DOCKER_USERNAME} --password-stdin
+      echo 'Done!'
+
+      cd MainImage
+      # start of script
+      # label
+      VERSION=${{ parameters.buildVersion }}
+      #VERSION=6.0.0
+      LABEL=$VERSION
+
+      # load signing key!
+      mkdir -p $HOME/.docker/trust/private
+      echo $DCT_FILE | base64 --decode > $HOME/.docker/trust/private/$DCT_HASH.key
+      chmod 600 $HOME/.docker/trust/private/$DCT_HASH.key
+      docker trust key load $HOME/.docker/trust/private/$DCT_HASH.key --name azure
+      # end of signing!
+
+      echo "Input 'LABEL' is $LABEL"
+      echo "Input 'VERSION' is $VERSION"
+
+      # if the version is an alpha version, push to "alpha":
+      if [[ $VERSION == *"alpha"* ]]; then
+        LABEL="alpha"
+        echo "Recognized version as alpha: '$VERSION'"
+      fi
+
+      # if the version is a beta version, push to "beta":
+      if [[ $VERSION == *"beta"* ]]; then
+        echo "Recognized version as beta: '$VERSION'"
+        LABEL="beta"
+      fi
+
+      if [[ $VERSION != *"beta"* && $VERSION != *"alpha"* && $VERSION != *"dev"* ]]; then
+        echo "Recognized version as production: '$VERSION'"
+        LABEL="latest"
+      fi
+
+      echo "---"
+      echo "final label is '$LABEL'"
+      echo "final version is '$VERSION'"
+
+
+
+      # build $LABEL when it's a develop version
+      if [[ $VERSION == *"dev"* ]]; then
+        echo "Will build development under tag '$LABEL'."
+        docker buildx build --quiet --pull --no-cache --platform ${{ parameters.platforms }} --build-arg VERSION --build-arg version=$VERSION \
+          --build-arg build_version=$VERSION --build-arg build_base=${{ parameters.buildImageType }} \
+          --build-arg build_root_image=${{ parameters.baseImage }} \
+          --build-arg build_platform=${{ parameters.buildPhpVersion }} -t ${{ parameters.repository }}:$LABEL --push .
+
+          #docker trust sign ${{ parameters.repository }}:$LABEL
+      fi
+
+      if [[ $VERSION == *"beta"* || $VERSION == *"alpha"* ]]; then
+        echo "Will build or alpha or beta version under tag '$LABEL' and '$VERSION'."
+        docker buildx build --pull  --progress=plain --no-cache --platform ${{ parameters.platforms }} --build-arg VERSION --build-arg version=$VERSION \
+          --build-arg build_version=$VERSION --build-arg build_base=${{ parameters.buildImageType }} \
+          --build-arg build_root_image=${{ parameters.baseImage }} \
+          --build-arg build_platform=${{ parameters.buildPhpVersion }} \
+          --tag ${{ parameters.repository }}:$LABEL \
+          --tag ${{ parameters.repository }}:$VERSION \
+          --push .
+      fi
+
+
+
+      # build label AND version-$VERSION if not "develop" and not alpha or beta.
+      if [[ $VERSION != *"beta"* && $VERSION != *"alpha"* && $VERSION != *"dev"* ]]; then
+        echo "Will build prod version '$VERSION' under tag '$LABEL'."
+        
+        currentversion=$VERSION
+        # if starts with "v", remove the "v":
+        if [[ $currentversion == v* ]]; then
+          currentversion=${currentversion#*v} 
+          echo "version is now $currentversion"
+        fi
+
+
+        # split the version into parts:
+        split=( ${currentversion//./ } )
+
+        echo "Will build production version as '$LABEL'"
+        echo "Will build production version as 'version-${split[0]}'"
+        echo "Will build production version as 'version-${split[0]}.${split[1]}'"
+        echo "Will build production version as 'version-$currentversion'"
+
+        # build major tag
+        docker buildx build --progress=plain --no-cache --platform ${{ parameters.platforms }} --build-arg VERSION --build-arg version=${{ parameters.buildVersion }} \
+          --build-arg build_version=${{ parameters.buildVersion }} \
+          --build-arg build_base=${{ parameters.buildImageType }} \
+          --build-arg build_root_image=${{ parameters.baseImage }} \
+          --build-arg build_platform=${{ parameters.buildPhpVersion }} \
+          --tag ${{ parameters.repository }}:$LABEL \
+          --tag ${{ parameters.repository }}:version-${split[0]} \
+          --tag ${{ parameters.repository }}:version-${split[0]}.${split[1]} \
+          --tag ${{ parameters.repository }}:version-$currentversion \
+          --push .
+
+      fi
+
+
+      # end of script
+
+    displayName: 'Build!'
+    env:
+      VERSION: ${{ parameters.buildVersion }}
+      DOCKER_USERNAME: $(DockerUsername)
+      DOCKER_PASSWORD: $(DockerPassword)
+      DCT_FILE: $(DCT_FILE)
+      DCT_HASH: $(DCT_KEY)
+      DOCKER_CONTENT_TRUST_REPOSITORY_PASSPHRASE: $(DOCKER_CONTENT_TRUST_REPOSITORY_PASSPHRASE)
+  - checkout: self
+    clean: true
