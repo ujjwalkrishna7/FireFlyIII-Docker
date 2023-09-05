@@ -1,7 +1,4 @@
-ARG build_base=default_value
-ARG build_root_image=default_root_image
-ARG build_platform=default_platform
-FROM $build_root_image:$build_base-$build_platform
+FROM php:7.4-apache
 
 # For more information about fireflyiii/base visit https://dev.azure.com/firefly-iii/BaseImage
 
