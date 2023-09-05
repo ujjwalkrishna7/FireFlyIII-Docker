@@ -1,6 +1,6 @@
-ARG build_platform
-ARG build_base
-ARG build_root_image
+ARG build_base=default_value
+ARG build_root_image=default_root_image
+ARG build_platform=default_platform
 FROM $build_root_image:$build_base-$build_platform
 
 # For more information about fireflyiii/base visit https://dev.azure.com/firefly-iii/BaseImage
