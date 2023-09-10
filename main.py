@@ -259,7 +259,7 @@ def getExpenseTransactionBody(exp: Expense, myshare: ExpenseUser, data: list[str
         "type": "withdrawal",
         "amount": myshare.getOwedShare(),
         "currency_code": exp.getCurrencyCode(),
-        "date": getDate(exp.getCreatedAt()).isoformat(),
+        "date": getDate(exp.getDate()).isoformat(),
         "payment_date": getDate(exp.getDate()).isoformat(),
         "description": description,
         "reconciled": False,
