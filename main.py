@@ -175,6 +175,14 @@ def updateTransaction(newTxn: dict, oldTxnBody: dict) -> None:
 
     oldTxnBody["transactions"][0].update(newTxn)
 
+    # To update category_id
+    cat = (callApi("categories", method="GET").json())['data']
+    for i in cat:
+        if(i['attributes']['name']==oldTxnBody["transactions"][0]["category_name"]):
+            cat_id = i['id']
+    oldTxnBody["transactions"][0]["category_id"]= cat_id;
+
+
     # https://github.com/firefly-iii/firefly-iii/issues/6828
     del oldTxnBody["transactions"][0]["foreign_currency_id"]
 
