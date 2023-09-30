@@ -180,7 +180,8 @@ def updateTransaction(newTxn: dict, oldTxnBody: dict) -> None:
     for i in cat:
         if(i['attributes']['name']==oldTxnBody["transactions"][0]["category_name"]):
             cat_id = i['id']
-    oldTxnBody["transactions"][0]["category_id"]= cat_id;
+            oldTxnBody["transactions"][0]["category_id"]= cat_id
+            break
 
 
     # https://github.com/firefly-iii/firefly-iii/issues/6828
